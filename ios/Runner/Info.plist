@@ -78,6 +78,10 @@
 		<string>يحتاج التطبيق للميكروفون عند تسجيل الفيديو.</string>
 		<key>NSLocationWhenInUseUsageDescription</key>
 		<string>يحتاج التطبيق إلى موقعك لتسجيل الحضور والانصراف.</string>
+		<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+		<string>يحتاج التطبيق إلى موقعك لتسجيل الحضور والانصراف.</string>
+		<key>NSLocationAlwaysUsageDescription</key>
+		<string>يحتاج التطبيق إلى موقعك لتسجيل الحضور والانصراف.</string>
 		<key>ITSAppUsesNonExemptEncryption</key>
 		<false/>
 		<key>LSApplicationQueriesSchemes</key>
