@@ -1,9 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
+  /// Called when an authenticated request is rejected with 401 — the stored
+  /// token is expired or no longer valid. Wired in main.dart to clear the
+  /// session and return to the login screen.
+  static void Function()? onSessionExpired;
+
   // Base URL for the Next.js backend (real-estate-app).
   // Default targets production. Override at build time for local dev:
   //   flutter run --dart-define=API_BASE_URL=http://10.0.2.2:3000
@@ -34,7 +40,8 @@ class ApiService {
     );
   }
 
-  static dynamic _parseBody(http.Response response) {
+  @visibleForTesting
+  static dynamic parseBody(http.Response response, {bool authenticated = false}) {
     final code = response.statusCode;
     dynamic body;
     try {
@@ -45,6 +52,10 @@ class ApiService {
     if (code >= 200 && code < 300) {
       return body is Map && body.containsKey('data') ? body['data'] : body;
     }
+    if (code == 401 && authenticated) {
+      onSessionExpired?.call();
+      throw ApiException('انتهت الجلسة، يرجى تسجيل الدخول من جديد', code);
+    }
     if (code == 401 || code == 403) {
       final msg = (body is Map ? body['error'] as String? : null) ?? 'غير مصرح';
       throw ApiException(msg, code);
@@ -54,11 +65,14 @@ class ApiService {
     throw ApiException(msg, code);
   }
 
+  static bool _hasToken(Map<String, String> headers) =>
+      headers.containsKey('Authorization');
+
   static Future<dynamic> getJson(String path,
       {Map<String, dynamic>? query}) async {
     final headers = await _getHeaders();
     final response = await http.get(_uri(path, query), headers: headers);
-    return _parseBody(response);
+    return parseBody(response, authenticated: _hasToken(headers));
   }
 
   static Future<dynamic> postJson(String path,
@@ -69,13 +83,13 @@ class ApiService {
       headers: headers,
       body: body != null ? jsonEncode(body) : null,
     );
-    return _parseBody(response);
+    return parseBody(response, authenticated: _hasToken(headers));
   }
 
   static Future<dynamic> deleteJson(String path) async {
     final headers = await _getHeaders();
     final response = await http.delete(_uri(path), headers: headers);
-    return _parseBody(response);
+    return parseBody(response, authenticated: _hasToken(headers));
   }
 
   static Future<dynamic> patchJson(String path,
@@ -86,7 +100,7 @@ class ApiService {
       headers: headers,
       body: body != null ? jsonEncode(body) : null,
     );
-    return _parseBody(response);
+    return parseBody(response, authenticated: _hasToken(headers));
   }
 
   /// Uploads a file to /api/mobile/upload. Returns the public URL.
@@ -99,7 +113,7 @@ class ApiService {
 
     final streamed = await request.send();
     final response = await http.Response.fromStream(streamed);
-    final data = _parseBody(response);
+    final data = parseBody(response, authenticated: _hasToken(headers));
     final url = (data is Map ? data['url'] as String? : null);
     if (url == null || url.isEmpty) {
       throw ApiException('فشل رفع الملف', response.statusCode);
@@ -114,7 +128,7 @@ class ApiService {
       headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
       body: jsonEncode({'email': email, 'password': password}),
     );
-    final data = _parseBody(response);
+    final data = parseBody(response);
     return Map<String, dynamic>.from(data as Map);
   }
 }

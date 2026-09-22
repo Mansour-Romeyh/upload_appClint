@@ -451,6 +451,13 @@ class _AttendanceScreenState extends State<AttendanceScreen> with SingleTickerPr
                       requesterLine,
                       style: const TextStyle(fontSize: 13, color: Color(0xFF7C2D12)),
                     ),
+                    if (req.location != null && req.location!.trim().isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'الموقع: ${req.location}',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF7C2D12)),
+                      ),
+                    ],
                     if (timeLabel != null) ...[
                       const SizedBox(height: 2),
                       Text(timeLabel, style: const TextStyle(fontSize: 12, color: Color(0xFF9A3412))),
@@ -554,12 +561,14 @@ class _AttendanceScreenState extends State<AttendanceScreen> with SingleTickerPr
 
 class CheckInRequest {
   final String id;
+  final String? location;
   final String? note;
   final String? requestedBy;
   final String? requestedAt;
 
   const CheckInRequest({
     required this.id,
+    this.location,
     this.note,
     this.requestedBy,
     this.requestedAt,
@@ -567,6 +576,7 @@ class CheckInRequest {
 
   factory CheckInRequest.fromJson(Map<String, dynamic> json) => CheckInRequest(
         id: json['id'] as String,
+        location: json['location'] as String?,
         note: json['note'] as String?,
         requestedBy: json['requestedBy'] as String?,
         requestedAt: json['requestedAt'] as String?,

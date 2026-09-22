@@ -2,6 +2,136 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:fluttertoast/fluttertoast.dart';
 import '../services/api_service.dart';
+import '../services/auth_service.dart';
+
+/// Fixed customer-status vocabulary. MUST stay identical to
+/// CUSTOMER_STATUSES in real-estate-app src/lib/validations.ts.
+const List<String> kCustomerStatuses = ['مهتم', 'غير مهتم', 'قام بالشراء'];
+
+Color _statusColor(String status) {
+  switch (status) {
+    case 'مهتم':
+      return const Color(0xFF16A34A);
+    case 'غير مهتم':
+      return const Color(0xFFDC2626);
+    case 'قام بالشراء':
+      return const Color(0xFF2563EB);
+    default:
+      return const Color(0xFF6B7280);
+  }
+}
+
+/// Bottom sheet: pick one of [kCustomerStatuses] + optional note.
+/// Resolves to `{'status': ..., 'description': ...}` or null when dismissed.
+Future<Map<String, String>?> _showStatusSheet(
+  BuildContext context, {
+  String? current,
+}) {
+  final noteController = TextEditingController();
+  String? selected = kCustomerStatuses.contains(current) ? current : null;
+  return showModalBottomSheet<Map<String, String>>(
+    context: context,
+    isScrollControlled: true,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setSheetState) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: Padding(
+          padding:
+              EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Center(
+                    child: Text(
+                      'تغيير الحالة',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  for (final s in kCustomerStatuses)
+                    ListTile(
+                      title: Text(s),
+                      leading: Icon(
+                        selected == s
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_off,
+                        color: selected == s
+                            ? _statusColor(s)
+                            : const Color(0xFF9CA3AF),
+                      ),
+                      onTap: () => setSheetState(() => selected = s),
+                    ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: noteController,
+                    maxLines: 3,
+                    maxLength: 500,
+                    decoration: InputDecoration(
+                      labelText: 'ملاحظة (اختياري)',
+                      alignLabelWithHint: true,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: selected == null
+                          ? null
+                          : () => Navigator.of(ctx).pop({
+                                'status': selected!,
+                                'description': noteController.text.trim(),
+                              }),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF284A63),
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('حفظ'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// Opens the change-status sheet for [customerId] and saves the choice.
+/// Returns true when the status was updated (caller should refresh).
+Future<bool> changeCustomerStatus(
+  BuildContext context,
+  String customerId, {
+  String? current,
+}) async {
+  final result = await _showStatusSheet(context, current: current);
+  if (result == null) return false;
+  try {
+    await ApiService.postJson(
+      '/api/mobile/customers/$customerId/status',
+      body: {
+        'status': result['status'],
+        if ((result['description'] ?? '').isNotEmpty)
+          'description': result['description'],
+      },
+    );
+    Fluttertoast.showToast(msg: 'تم تحديث الحالة');
+    return true;
+  } catch (e) {
+    Fluttertoast.showToast(msg: 'فشل تحديث الحالة: $e');
+    return false;
+  }
+}
 
 class CustomersScreen extends StatefulWidget {
   const CustomersScreen({super.key});
@@ -15,11 +145,18 @@ class _CustomersScreenState extends State<CustomersScreen> {
   String? _error;
   List<Map<String, dynamic>> _customers = [];
   String _search = '';
+  bool _canAddCustomer = false;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    _loadRole();
+  }
+
+  Future<void> _loadRole() async {
+    final canAdd = await AuthService.canAddCustomer();
+    if (mounted) setState(() => _canAddCustomer = canAdd);
   }
 
   Future<void> _loadData() async {
@@ -41,6 +178,15 @@ class _CustomersScreenState extends State<CustomersScreen> {
         _error = e.toString();
         _loading = false;
       });
+    }
+  }
+
+  Future<void> _openAddCustomer() async {
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const CustomerFormScreen()),
+    );
+    if (created == true) {
+      _loadData();
     }
   }
 
@@ -92,13 +238,47 @@ class _CustomersScreenState extends State<CustomersScreen> {
                 children: [
                   Image.asset('assets/logo.png', height: 28, color: Colors.white),
                   const SizedBox(height: 12),
-                  const Text(
-                    'العملاء',
-                    style: TextStyle(
-                      fontSize: 22,
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'العملاء',
+                          style: TextStyle(
+                            fontSize: 22,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (_canAddCustomer)
+                        Material(
+                          color: Colors.white.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(10),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: _openAddCustomer,
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 8),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.add, color: Colors.white, size: 18),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'إضافة عميل',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   const Text(
@@ -168,6 +348,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
     final phone = (customer['phone'] ?? '').toString();
     final email = (customer['email'] ?? '').toString();
     final type = _typeLabel(customer['customerType'] as String?);
+    final status = (customer['status'] ?? '').toString();
     final counts = (customer['_count'] as Map?) ?? const {};
     final ownedCount = (counts['ownedApartments'] as num?)?.toInt() ?? 0;
     final tenantCount = (counts['tenantApartments'] as num?)?.toInt() ?? 0;
@@ -285,6 +466,46 @@ class _CustomersScreenState extends State<CustomersScreen> {
                 ),
               ],
             ],
+            const SizedBox(height: 12),
+            InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () async {
+                final updated = await changeCustomerStatus(
+                  context,
+                  customer['id']?.toString() ?? '',
+                  current: status.isEmpty ? null : status,
+                );
+                if (updated) _loadData();
+              },
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _statusColor(status).withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _statusColor(status).withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.flag, size: 14, color: _statusColor(status)),
+                    const SizedBox(width: 6),
+                    Text(
+                      status.isEmpty ? 'تحديد الحالة' : status,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _statusColor(status),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Icon(Icons.edit, size: 12, color: _statusColor(status)),
+                  ],
+                ),
+              ),
+            ),
             if (ownedCount > 0 || tenantCount > 0) ...[
               const SizedBox(height: 12),
               Row(
@@ -380,6 +601,15 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     }
   }
 
+  Future<void> _changeStatus() async {
+    final updated = await changeCustomerStatus(
+      context,
+      widget.customerId,
+      current: (_customer?['status'] ?? '').toString(),
+    );
+    if (updated && mounted) _load();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Directionality(
@@ -415,6 +645,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     final type = (c['customerType'] ?? '').toString();
     final source = (c['source'] ?? '').toString();
     final subType = (c['type'] ?? '').toString();
+    final currentStatus = (c['status'] ?? '').toString();
     final budget = (c['budget'] as num?)?.toDouble();
     final createdAt = c['createdAt']?.toString();
     final favs = List<Map<String, dynamic>>.from(c['favouriteAddresses'] ?? []);
@@ -466,6 +697,32 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                 Text(
                   type,
                   style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+              ],
+              if (currentStatus.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.flag, size: 14, color: Colors.white),
+                      const SizedBox(width: 6),
+                      Text(
+                        currentStatus,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ],
@@ -521,13 +778,30 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
               );
             }).toList(),
           ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: _changeStatus,
+              icon: const Icon(Icons.flag),
+              label: const Text('تغيير الحالة'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF284A63),
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ),
+        ),
         if (logs.isNotEmpty)
           _section(
             'سجل الحالات',
             logs.map((l) {
               final status = (l['status'] ?? '').toString();
-              final note = (l['notes'] ?? '').toString();
-              final when = _formatDate(l['createdAt']?.toString() ?? '');
+              final note = (l['description'] ?? '').toString();
+              final when =
+                  _formatDate((l['datetime'] ?? l['createdAt'])?.toString() ?? '');
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Column(
@@ -754,6 +1028,176 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class CustomerFormScreen extends StatefulWidget {
+  const CustomerFormScreen({super.key});
+
+  @override
+  State<CustomerFormScreen> createState() => _CustomerFormScreenState();
+}
+
+class _CustomerFormScreenState extends State<CustomerFormScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _budgetController = TextEditingController();
+  String? _customerType;
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _phoneController.dispose();
+    _emailController.dispose();
+    _budgetController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate() || _saving) return;
+    setState(() => _saving = true);
+
+    final budgetText = _budgetController.text.trim();
+    final budget = num.tryParse(budgetText);
+    final body = <String, dynamic>{
+      'customerName': _nameController.text.trim(),
+      if (_phoneController.text.trim().isNotEmpty)
+        'phone': _phoneController.text.trim(),
+      if (_emailController.text.trim().isNotEmpty)
+        'email': _emailController.text.trim(),
+      if (_customerType != null) 'customerType': _customerType,
+      'budget': ?budget,
+    };
+
+    try {
+      await ApiService.postJson('/api/mobile/customers', body: body);
+      if (!mounted) return;
+      Fluttertoast.showToast(msg: 'تمت إضافة العميل بنجاح');
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      Fluttertoast.showToast(msg: 'فشل إضافة العميل: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('إضافة عميل'),
+          backgroundColor: const Color(0xFF284A63),
+          foregroundColor: Colors.white,
+        ),
+        body: Form(
+          key: _formKey,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              _field(
+                controller: _nameController,
+                label: 'اسم العميل *',
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'اسم العميل مطلوب'
+                    : null,
+              ),
+              _field(
+                controller: _phoneController,
+                label: 'الهاتف',
+                keyboardType: TextInputType.phone,
+              ),
+              _field(
+                controller: _emailController,
+                label: 'البريد الإلكتروني',
+                keyboardType: TextInputType.emailAddress,
+                validator: (v) {
+                  final t = (v ?? '').trim();
+                  if (t.isEmpty) return null;
+                  return t.contains('@') ? null : 'بريد إلكتروني غير صالح';
+                },
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: DropdownButtonFormField<String>(
+                  initialValue: _customerType,
+                  decoration: _decoration('نوع العميل'),
+                  items: const [
+                    DropdownMenuItem(value: 'individual', child: Text('فرد')),
+                    DropdownMenuItem(value: 'company', child: Text('شركة')),
+                  ],
+                  onChanged: (v) => setState(() => _customerType = v),
+                ),
+              ),
+              _field(
+                controller: _budgetController,
+                label: 'الميزانية',
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: _saving ? null : _submit,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF284A63),
+                    foregroundColor: Colors.white,
+                  ),
+                  child: _saving
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('حفظ'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _field({
+    required TextEditingController controller,
+    required String label,
+    TextInputType? keyboardType,
+    String? Function(String?)? validator,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: TextFormField(
+        controller: controller,
+        keyboardType: keyboardType,
+        validator: validator,
+        decoration: _decoration(label),
+      ),
+    );
+  }
+
+  InputDecoration _decoration(String label) {
+    return InputDecoration(
+      labelText: label,
+      filled: true,
+      fillColor: Colors.white,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
       ),
     );
   }

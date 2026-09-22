@@ -1,12 +1,36 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'app_shell.dart';
 import 'screens/login.dart';
+import 'services/api_service.dart';
 import 'services/auth_service.dart';
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+bool _handlingSessionExpiry = false;
+
+Future<void> _onSessionExpired() async {
+  if (_handlingSessionExpiry) return;
+  _handlingSessionExpiry = true;
+  try {
+    // Concurrent 401s: only the first one still holding a token proceeds.
+    if (!await AuthService.isLoggedIn()) return;
+    await AuthService.clearSession();
+    Fluttertoast.showToast(msg: 'انتهت الجلسة، يرجى تسجيل الدخول من جديد');
+    navigatorKey.currentState?.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  } finally {
+    _handlingSessionExpiry = false;
+  }
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  ApiService.onSessionExpired = _onSessionExpired;
   final isLoggedIn = await AuthService.isLoggedIn();
   runApp(SarApp(isLoggedIn: isLoggedIn));
 }
@@ -19,6 +43,7 @@ class SarApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'SAR Employee',
       debugShowCheckedModeBanner: false,
       locale: const Locale('ar'),
